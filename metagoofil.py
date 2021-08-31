@@ -25,30 +25,34 @@ __version__ = "1.1.0"
 
 
 class DownloadWorker(threading.Thread):
-    def __init__(self):
+
+    mg = None
+
+    def __init__(self,mg):
         threading.Thread.__init__(self)
+        self.mg = mg
 
     def run(self):
         while True:
             # Grab URL off the queue.
-            url = mg.queue.get()
+            url = self.mg.queue.get()
 
             try:
                 headers = {}
 
                 # Assign a User-Agent for each file request.
                 # No -u
-                if mg.user_agent == "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)":
+                if self.mg.user_agent == "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)":
                     headers["User-Agent"] = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
                 # -u
-                elif mg.user_agent is None:
-                    user_agent_choice = random.choice(mg.random_user_agents).strip()
+                elif self.mg.user_agent is None:
+                    user_agent_choice = random.choice(self.mg.random_user_agents).strip()
                     headers["User-Agent"] = f"{user_agent_choice}"
                 # -u "My custom user agent 2.0"
                 else:
-                    headers["User-Agent"] = mg.user_agent
+                    headers["User-Agent"] = self.mg.user_agent
 
-                response = requests.get(url, headers=headers, verify=False, timeout=mg.url_timeout, stream=True)
+                response = requests.get(url, headers=headers, verify=False, timeout=self.mg.url_timeout, stream=True)
 
                 # Download the file.
                 if response.status_code == 200:
@@ -62,7 +66,7 @@ class DownloadWorker(threading.Thread):
                         )
                         size = len(response.content)
 
-                    mg.total_bytes += size
+                    self.mg.total_bytes += size
 
                     # Strip any trailing /'s before extracting file name.
                     url_file_name = str(url.strip("/").split("/")[-1])
@@ -73,7 +77,7 @@ class DownloadWorker(threading.Thread):
 
                     print(f'[+] Downloading "{filename}" [{size} bytes] from: {url}')
 
-                    with open(os.path.join(mg.save_directory, filename), "wb") as fh:
+                    with open(os.path.join(self.mg.save_directory, filename), "wb") as fh:
                         for chunk in response.iter_content(chunk_size=1024):
                             if chunk:  # Filter out keep-alive new chunks.
                                 fh.write(chunk)
@@ -84,7 +88,7 @@ class DownloadWorker(threading.Thread):
             except requests.exceptions.RequestException as e:
                 print(f"[-] Exception for url: {url} -- {e}")
 
-            mg.queue.task_done()
+            self.mg.queue.task_done()
 
 
 class Metagoofil:
@@ -130,7 +134,7 @@ class Metagoofil:
     def go(self):
         # Kickoff the threadpool.
         for i in range(self.number_of_threads):
-            thread = DownloadWorker()
+            thread = DownloadWorker(self)
             thread.daemon = True
             thread.start()
 
@@ -252,115 +256,3 @@ def positive_float(value):
         return value_float
     except (AssertionError, ValueError):
         raise argparse.ArgumentTypeError(f"invalid value '{value}', must be a float >= 0")
-
-
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-        description=f"Metagoofil v{__version__} - Search Google and download specific file types.",
-        formatter_class=SmartFormatter,
-    )
-    parser.add_argument("-d", dest="domain", action="store", required=True, help="Domain to search.")
-    parser.add_argument(
-        "-e",
-        dest="delay",
-        action="store",
-        type=positive_float,
-        default=30.0,
-        help=(
-            "Delay (in seconds) between searches.  If it's too small Google may block your IP, too big and your search "
-            "may take a while.  Default: 30.0"
-        ),
-    )
-    parser.add_argument(
-        "-f",
-        nargs="?",
-        metavar="SAVE_FILE",
-        dest="save_links",
-        action="store",
-        default=False,
-        help="R|Save the html links to a file.\n"
-        "no -f = Do not save links\n"
-        "-f = Save links to html_links_<TIMESTAMP>.txt\n"
-        "-f SAVE_FILE = Save links to SAVE_FILE",
-    )
-    parser.add_argument(
-        "-i",
-        dest="url_timeout",
-        action="store",
-        type=positive_int,
-        default=15,
-        help="Number of seconds to wait before timeout for unreachable/stale pages.  Default: 15",
-    )
-    parser.add_argument(
-        "-l", dest="search_max", action="store", type=int, default=100, help="Maximum results to search.  Default: 100"
-    )
-    parser.add_argument(
-        "-n",
-        dest="download_file_limit",
-        default=100,
-        action="store",
-        type=int,
-        help="Maximum number of files to download per filetype.  Default: 100",
-    )
-    parser.add_argument(
-        "-o",
-        dest="save_directory",
-        action="store",
-        default=os.getcwd(),
-        help='Directory to save downloaded files.  Default is current working directory, "."',
-    )
-    parser.add_argument(
-        "-r",
-        dest="number_of_threads",
-        action="store",
-        type=positive_int,
-        default=8,
-        help="Number of downloader threads.  Default: 8",
-    )
-    parser.add_argument(
-        "-t",
-        dest="file_types",
-        action="store",
-        required=True,
-        type=csv_list,
-        help=(
-            "file_types to download (pdf,doc,xls,ppt,odp,ods,docx,xlsx,pptx).  To search all 17,576 three-letter "
-            'file extensions, type "ALL"'
-        ),
-    )
-    parser.add_argument(
-        "-u",
-        dest="user_agent",
-        nargs="?",
-        default="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-        help="R|User-Agent for file retrieval against -d domain.\n"
-        'no -u = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"\n'
-        "-u = Randomize User-Agent\n"
-        '-u "My custom user agent 2.0" = Your customized User-Agent',
-    )
-    parser.add_argument(
-        "-w",
-        dest="download_files",
-        action="store_true",
-        default=False,
-        help="Download the files, instead of just viewing search results.",
-    )
-    args = parser.parse_args()
-
-    if args.save_directory and args.download_files:
-        print(f"[*] Downloaded files will be saved here: {args.save_directory}")
-        if not os.path.exists(args.save_directory):
-            print(f"[+] Creating folder: {args.save_directory}")
-            os.mkdir(args.save_directory)
-
-    if args.save_links is False:
-        args.save_links = None
-    elif args.save_links is None:
-        args.save_links = f"html_links_{get_timestamp()}.txt"
-
-    # print(vars(args))
-    mg = Metagoofil(**vars(args))
-    mg.go()
-
-    print("[+] Done!")
